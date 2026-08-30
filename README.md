@@ -27,7 +27,10 @@ Two independent pieces:
 
 - Ansible core >= 2.15 (tested with `ansible-core` 2.20 / `ansible` 13).
 - Install collections: `ansible-galaxy collection install -r requirements.yml`
-  (pulls in `community.proxmox`, only needed for the Proxmox test-bed path).
+  (pulls in `community.crypto` for TLS certificate generation, and
+  `community.proxmox`, only needed for the Proxmox test-bed path).
+- The control node needs the `cryptography` Python package (a dependency of
+  `community.crypto`) - already present if `pip install ansible` pulled it in.
 - SSH access (with a key, not a password) from the control node to every
   target host, and to the Proxmox host's root account if using the test-bed
   playbook.
@@ -87,6 +90,48 @@ affected node.
   the VM. Automating safe member removal (which requires care around quorum)
   was out of scope here.
 
+## TLS
+
+The cluster is always TLS-secured - there is no plaintext mode. `roles/etcd`
+generates everything itself; nothing is brought in by the operator:
+
+- One cluster **CA** (self-signed).
+- A **peer certificate** per node (mutual TLS: `--peer-client-cert-auth`), SAN
+  covering the node's `ansible_host` and inventory hostname.
+- A **server certificate** per node for client-facing traffic
+  (`--client-cert-auth`), SAN additionally covering `127.0.0.1` so local
+  `etcdctl` calls verify cleanly.
+- One shared **client certificate**, deployed to every node, used by this
+  role's own health checks and by `etcdctl member add` during scale-out.
+
+Generation uses `community.crypto` (`openssl_privatekey` / `openssl_csr` /
+`x509_certificate`), which is idempotent by design - certs are only
+regenerated when their parameters (SANs, validity, key type/size) actually
+change. The CA private key and all generated certs/keys are written to
+`etcd_pki_dir` (default `pki/<cluster_name>/` at the repo root - already in
+`.gitignore`) on the control node, then pushed out to each target host's
+`etcd_remote_pki_dir` (default `/etc/etcd/pki`) over the existing SSH
+connection. **Back up or otherwise protect `etcd_pki_dir` yourself** - if you
+lose the CA key, every node needs new certs.
+
+To use `etcdctl` yourself against a running cluster (from the control node,
+using the generated client cert):
+```bash
+etcdctl --endpoints=https://<node-ip>:2379 \
+  --cacert=pki/etcd-cluster/ca.pem \
+  --cert=pki/etcd-cluster/client.pem \
+  --key=pki/etcd-cluster/client-key.pem \
+  endpoint health
+```
+
+Relevant variables (`roles/etcd/defaults/main.yml`): `etcd_pki_dir`,
+`etcd_remote_pki_dir`, `etcd_key_type`, `etcd_key_size`,
+`etcd_ca_validity_days`, `etcd_cert_validity_days`. Certificate rotation
+before expiry is not automated - re-running the playbook after bumping the
+validity/key variables (or just deleting the relevant file(s) under
+`etcd_pki_dir`) regenerates and redeploys them, followed by an automatic
+`etcdctl`-triggered restart of the affected node(s).
+
 ## Variables reference
 
 ### `roles/etcd` (generic - `roles/etcd/defaults/main.yml`, `group_vars/etcd.yml`)
@@ -100,6 +145,10 @@ affected node.
 | `etcd_data_dir` / `etcd_config_dir` / `etcd_install_dir` | `/var/lib/etcd`, `/etc/etcd`, `/usr/local/bin` | Filesystem layout |
 | `etcd_system_user` / `etcd_system_group` | `etcd` | Service account |
 | `etcd_health_check_retries` / `_delay` | `12` / `5` | Health-check polling |
+| `etcd_pki_dir` | `pki/<cluster_name>/` | Control-node CA/cert working directory (gitignored) |
+| `etcd_remote_pki_dir` | `/etc/etcd/pki` | Where certs/keys are deployed on each node |
+| `etcd_key_type` / `etcd_key_size` | `RSA` / `2048` | Generated key algorithm/size |
+| `etcd_ca_validity_days` / `etcd_cert_validity_days` | `3650` / `825` | CA / leaf certificate validity |
 
 ### `roles/proxmox_testbed` (optional - `roles/proxmox_testbed/defaults/main.yml`, `group_vars/proxmox_testbed.yml`)
 
@@ -179,3 +228,6 @@ this at your own template:
   node's genuinely first start (empty data-dir) - re-running against an
   already-formed cluster is safe regardless of what's rendered into the
   config file.
+- TLS: `community.crypto` only regenerates a key/CSR/certificate when its own
+  parameters change, so re-running with no variable changes leaves existing
+  certs untouched (no restart triggered).

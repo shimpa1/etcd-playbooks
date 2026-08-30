@@ -14,14 +14,23 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   `ERROR: Ansible requires blocking IO on stdin/stdout/stderr` - wrap the
   command in `script -q /dev/null <cmd>` to force blocking I/O.
 - Validated end-to-end against a real host: Proxmox VE 9.2.4, node `pve-i2`
-  at `10.4.0.13`, template VMID 9000 (`ubuntu-26.04-template`). A 4-node
+  at `10.4.0.13`, template VMID 9000 (`ubuntu-26.04-template`). A 4-node TLS
   cluster (including a live scale-out from 3->4 via the runtime
   `etcdctl member add` join path) was provisioned and confirmed healthy
-  there; VMIDs 3201-3204 were left running afterward as a demonstrated
-  working example. A harmless orphaned thin LV `pve/vm-3101-disk-0`
-  (device-mapper wouldn't release it, ~12GB, not attached to any VM config)
-  was left over from a debugging cycle - safe to `lvremove -f` after it
-  clears on its own, or ignore.
+  there, with unauthenticated/plaintext access confirmed rejected; VMIDs
+  3201-3204 were left running afterward as a demonstrated working example.
+  A harmless orphaned thin LV `pve/vm-3101-disk-0` (device-mapper wouldn't
+  release it, ~12GB, not attached to any VM config) was left over from a
+  debugging cycle - safe to `lvremove -f` after it clears on its own, or
+  ignore.
+- TLS is mandatory, not a toggle (see README.md "TLS"). `roles/etcd`
+  generates its own CA/peer/server/client certs via `community.crypto` -
+  never assume plaintext etcd URLs when reading or editing this role.
+- A `delegate_to` target that references a `set_fact` value set only inside
+  a conditional loop (e.g. `etcd_existing_member_host`) must have a
+  `| default(...)` fallback: Jinja resolves `delegate_to` before the task's
+  own `when` is checked, so an undefined var there fails even on hosts that
+  would have skipped the task.
 
 ## Maintaining this file
 

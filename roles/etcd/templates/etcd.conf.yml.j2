@@ -2,12 +2,24 @@
 name: {{ inventory_hostname }}
 data-dir: {{ etcd_data_dir }}
 
-listen-peer-urls: http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_peer_port }}
-listen-client-urls: http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_client_port }},http://127.0.0.1:{{ etcd_client_port }}
+listen-peer-urls: https://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_peer_port }}
+listen-client-urls: https://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_client_port }},https://127.0.0.1:{{ etcd_client_port }}
 
-initial-advertise-peer-urls: http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_peer_port }}
-advertise-client-urls: http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_client_port }}
+initial-advertise-peer-urls: https://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_peer_port }}
+advertise-client-urls: https://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_client_port }}
 
 initial-cluster: {{ etcd_initial_cluster }}
 initial-cluster-token: {{ etcd_cluster_name }}
 initial-cluster-state: {{ etcd_effective_cluster_state }}
+
+client-transport-security:
+  cert-file: {{ etcd_remote_pki_dir }}/server.pem
+  key-file: {{ etcd_remote_pki_dir }}/server-key.pem
+  trusted-ca-file: {{ etcd_remote_pki_dir }}/ca.pem
+  client-cert-auth: true
+
+peer-transport-security:
+  cert-file: {{ etcd_remote_pki_dir }}/peer.pem
+  key-file: {{ etcd_remote_pki_dir }}/peer-key.pem
+  trusted-ca-file: {{ etcd_remote_pki_dir }}/ca.pem
+  peer-client-cert-auth: true

@@ -1,0 +1,208 @@
+---
+# Generates a CA, per-node mutual-TLS peer certs, per-node server certs (for
+# client-facing traffic), and one shared client cert (for etcdctl/operator
+# use) - all outputs of this role, not something the operator brings in.
+# CA/leaf key material is generated once on the control node (community.crypto
+# is idempotent: it only regenerates a key/cert when its parameters change)
+# and pushed out to each target host over the existing SSH connection.
+
+- name: Ensure the local PKI directory exists
+  run_once: true
+  delegate_to: localhost
+  become: false
+  ansible.builtin.file:
+    path: "{{ etcd_pki_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Generate the cluster CA private key
+  run_once: true
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_privatekey:
+    path: "{{ etcd_pki_dir }}/ca-key.pem"
+    type: "{{ etcd_key_type }}"
+    size: "{{ etcd_key_size }}"
+    mode: "0600"
+
+- name: Generate the cluster CA signing request
+  run_once: true
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_csr:
+    path: "{{ etcd_pki_dir }}/ca.csr"
+    privatekey_path: "{{ etcd_pki_dir }}/ca-key.pem"
+    common_name: "{{ etcd_cluster_name }} CA"
+    basic_constraints:
+      - "CA:TRUE"
+    basic_constraints_critical: true
+    key_usage:
+      - keyCertSign
+      - cRLSign
+    key_usage_critical: true
+
+- name: Generate the self-signed cluster CA certificate
+  run_once: true
+  delegate_to: localhost
+  become: false
+  community.crypto.x509_certificate:
+    path: "{{ etcd_pki_dir }}/ca.pem"
+    csr_path: "{{ etcd_pki_dir }}/ca.csr"
+    privatekey_path: "{{ etcd_pki_dir }}/ca-key.pem"
+    provider: selfsigned
+    selfsigned_not_after: "+{{ etcd_ca_validity_days }}d"
+    mode: "0644"
+
+- name: Ensure this node's local PKI working directory exists
+  delegate_to: localhost
+  become: false
+  ansible.builtin.file:
+    path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}"
+    state: directory
+    mode: "0700"
+
+- name: "Generate {{ inventory_hostname }} peer private key"
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_privatekey:
+    path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/peer-key.pem"
+    type: "{{ etcd_key_type }}"
+    size: "{{ etcd_key_size }}"
+    mode: "0600"
+
+- name: "Generate {{ inventory_hostname }} peer signing request"
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_csr:
+    path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/peer.csr"
+    privatekey_path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/peer-key.pem"
+    common_name: "{{ inventory_hostname }}"
+    subject_alt_name: "{{ etcd_node_san }}"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - clientAuth
+      - serverAuth
+  vars:
+    etcd_node_san:
+      - "DNS:{{ inventory_hostname }}"
+      - "IP:{{ hostvars[inventory_hostname].ansible_host | default('127.0.0.1') }}"
+
+- name: "Sign {{ inventory_hostname }} peer certificate with the cluster CA"
+  delegate_to: localhost
+  become: false
+  community.crypto.x509_certificate:
+    path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/peer.pem"
+    csr_path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/peer.csr"
+    provider: ownca
+    ownca_path: "{{ etcd_pki_dir }}/ca.pem"
+    ownca_privatekey_path: "{{ etcd_pki_dir }}/ca-key.pem"
+    ownca_not_after: "+{{ etcd_cert_validity_days }}d"
+    mode: "0644"
+
+- name: "Generate {{ inventory_hostname }} server private key"
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_privatekey:
+    path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/server-key.pem"
+    type: "{{ etcd_key_type }}"
+    size: "{{ etcd_key_size }}"
+    mode: "0600"
+
+- name: "Generate {{ inventory_hostname }} server signing request"
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_csr:
+    path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/server.csr"
+    privatekey_path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/server-key.pem"
+    common_name: "{{ inventory_hostname }}"
+    subject_alt_name: "{{ etcd_node_san }}"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - serverAuth
+  vars:
+    # Includes 127.0.0.1 so local etcdctl calls against the loopback
+    # client-listen address also verify cleanly.
+    etcd_node_san:
+      - "DNS:{{ inventory_hostname }}"
+      - "IP:{{ hostvars[inventory_hostname].ansible_host | default('127.0.0.1') }}"
+      - "IP:127.0.0.1"
+
+- name: "Sign {{ inventory_hostname }} server certificate with the cluster CA"
+  delegate_to: localhost
+  become: false
+  community.crypto.x509_certificate:
+    path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/server.pem"
+    csr_path: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/server.csr"
+    provider: ownca
+    ownca_path: "{{ etcd_pki_dir }}/ca.pem"
+    ownca_privatekey_path: "{{ etcd_pki_dir }}/ca-key.pem"
+    ownca_not_after: "+{{ etcd_cert_validity_days }}d"
+    mode: "0644"
+
+- name: Generate the shared operator/etcdctl client private key
+  run_once: true
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_privatekey:
+    path: "{{ etcd_pki_dir }}/client-key.pem"
+    type: "{{ etcd_key_type }}"
+    size: "{{ etcd_key_size }}"
+    mode: "0600"
+
+- name: Generate the shared operator/etcdctl client signing request
+  run_once: true
+  delegate_to: localhost
+  become: false
+  community.crypto.openssl_csr:
+    path: "{{ etcd_pki_dir }}/client.csr"
+    privatekey_path: "{{ etcd_pki_dir }}/client-key.pem"
+    common_name: "{{ etcd_cluster_name }}-client"
+    key_usage:
+      - digitalSignature
+      - keyEncipherment
+    extended_key_usage:
+      - clientAuth
+
+- name: Sign the shared client certificate with the cluster CA
+  run_once: true
+  delegate_to: localhost
+  become: false
+  community.crypto.x509_certificate:
+    path: "{{ etcd_pki_dir }}/client.pem"
+    csr_path: "{{ etcd_pki_dir }}/client.csr"
+    provider: ownca
+    ownca_path: "{{ etcd_pki_dir }}/ca.pem"
+    ownca_privatekey_path: "{{ etcd_pki_dir }}/ca-key.pem"
+    ownca_not_after: "+{{ etcd_cert_validity_days }}d"
+    mode: "0644"
+
+- name: Create the remote PKI directory
+  become: true
+  ansible.builtin.file:
+    path: "{{ etcd_remote_pki_dir }}"
+    state: directory
+    owner: "{{ etcd_system_user }}"
+    group: "{{ etcd_system_group }}"
+    mode: "0700"
+
+- name: Deploy CA certificate and this node's certificates/keys
+  become: true
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ etcd_remote_pki_dir }}/{{ item.dest }}"
+    owner: "{{ etcd_system_user }}"
+    group: "{{ etcd_system_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: "{{ etcd_pki_dir }}/ca.pem", dest: ca.pem, mode: "0644" }
+    - { src: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/peer.pem", dest: peer.pem, mode: "0644" }
+    - { src: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/peer-key.pem", dest: peer-key.pem, mode: "0600" }
+    - { src: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/server.pem", dest: server.pem, mode: "0644" }
+    - { src: "{{ etcd_pki_dir }}/{{ inventory_hostname }}/server-key.pem", dest: server-key.pem, mode: "0600" }
+    - { src: "{{ etcd_pki_dir }}/client.pem", dest: client.pem, mode: "0644" }
+    - { src: "{{ etcd_pki_dir }}/client-key.pem", dest: client-key.pem, mode: "0600" }
+  notify: Restart etcd

@@ -24,9 +24,13 @@
 - name: Compute cluster membership facts
   ansible.builtin.set_fact:
     etcd_initial_cluster: >-
-      {% for h in groups[etcd_group_name] %}{{ h }}=http://{{ hostvars[h].ansible_host | default(h) }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}
+      {% for h in groups[etcd_group_name] %}{{ h }}=https://{{ hostvars[h].ansible_host | default(h) }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}
     etcd_all_client_endpoints: >-
-      {% for h in groups[etcd_group_name] %}http://{{ hostvars[h].ansible_host | default(h) }}:{{ etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}
+      {% for h in groups[etcd_group_name] %}https://{{ hostvars[h].ansible_host | default(h) }}:{{ etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}
+    etcd_etcdctl_env:
+      ETCDCTL_CACERT: "{{ etcd_remote_pki_dir }}/ca.pem"
+      ETCDCTL_CERT: "{{ etcd_remote_pki_dir }}/client.pem"
+      ETCDCTL_KEY: "{{ etcd_remote_pki_dir }}/client-key.pem"
 
 - name: Check whether this node has already bootstrapped etcd data
   ansible.builtin.stat:
@@ -66,10 +70,11 @@
   # scale-out, not just a fresh-cluster convenience.
   ansible.builtin.command: >-
     {{ etcd_install_dir }}/etcdctl
-    --endpoints=http://{{ hostvars[etcd_existing_member_host].ansible_host | default(etcd_existing_member_host) }}:{{ etcd_client_port }}
+    --endpoints=https://{{ hostvars[etcd_existing_member_host].ansible_host | default(etcd_existing_member_host) }}:{{ etcd_client_port }}
     member add {{ inventory_hostname }}
-    --peer-urls=http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_peer_port }}
-  delegate_to: "{{ etcd_existing_member_host }}"
+    --peer-urls=https://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_peer_port }}
+  environment: "{{ etcd_etcdctl_env }}"
+  delegate_to: "{{ etcd_existing_member_host | default(inventory_hostname) }}"
   when:
     - etcd_effective_cluster_state == 'existing'
     - not etcd_member_dir.stat.exists
@@ -116,6 +121,9 @@
     - "{{ etcd_data_dir }}"
     - "{{ etcd_config_dir }}"
   become: true
+
+- name: Set up TLS (CA, peer/server/client certificates)
+  ansible.builtin.include_tasks: tls.yml
 
 - name: Check currently installed etcd version
   ansible.builtin.command: "{{ etcd_install_dir }}/etcd --version"
@@ -197,6 +205,7 @@
     {{ etcd_install_dir }}/etcdctl
     --endpoints={{ etcd_all_client_endpoints }}
     endpoint health --cluster -w json
+  environment: "{{ etcd_etcdctl_env }}"
   register: etcd_health
   changed_when: false
   retries: "{{ etcd_health_check_retries }}"
@@ -205,7 +214,11 @@
   run_once: true
 
 - name: Report cluster member list
-  ansible.builtin.command: "{{ etcd_install_dir }}/etcdctl member list -w table"
+  ansible.builtin.command: >-
+    {{ etcd_install_dir }}/etcdctl
+    --endpoints={{ etcd_all_client_endpoints }}
+    member list -w table
+  environment: "{{ etcd_etcdctl_env }}"
   register: etcd_members
   changed_when: false
   run_once: true
