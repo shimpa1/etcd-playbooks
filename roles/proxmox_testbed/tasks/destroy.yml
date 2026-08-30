@@ -1,0 +1,72 @@
+---
+# Teardown counterpart to tasks/main.yml / provision_one_vm.yml - destroys
+# exactly the VMIDs that proxmox_vmid_start/proxmox_testbed_vm_count would
+# provision, so it stays in lockstep with the same variables used to create
+# them. Idempotent: destroying an already-absent VMID is a no-op.
+
+- name: Assert required Proxmox credentials are provided
+  ansible.builtin.assert:
+    that:
+      - proxmox_api_token_id is defined
+      - proxmox_api_token_secret is defined
+      - proxmox_api_token_secret != "REPLACE_ME"
+    fail_msg: >-
+      Missing Proxmox API credentials. Copy
+      group_vars/proxmox_testbed_vault.yml.example to
+      group_vars/proxmox_testbed_vault.yml and fill it in (see README.md
+      "Secrets").
+  run_once: true
+
+- name: Determine which VMIDs to destroy
+  run_once: true
+  ansible.builtin.set_fact:
+    proxmox_testbed_destroy_vmids: >-
+      {{ range(proxmox_vmid_start | int, proxmox_vmid_start | int + proxmox_testbed_vm_count | int) | list }}
+
+- name: Stop each test VM (graceful, then forceful)
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_port: "{{ proxmox_api_port }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ item }}"
+    state: stopped
+    force: true
+    timeout: 60
+  loop: "{{ proxmox_testbed_destroy_vmids }}"
+  # A VMID that doesn't exist yet/anymore can't be stopped - that's fine,
+  # the destroy task below already treats a missing VMID as a no-op.
+  failed_when: false
+
+- name: Destroy each test VM
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_port: "{{ proxmox_api_port }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ item }}"
+    state: absent
+    purge: true
+  loop: "{{ proxmox_testbed_destroy_vmids }}"
+
+- name: Remove the generated static inventory file, if present
+  run_once: true
+  delegate_to: localhost
+  become: false
+  ansible.builtin.file:
+    path: "{{ proxmox_testbed_inventory_output }}"
+    state: absent
+
+- name: Teardown summary
+  run_once: true
+  ansible.builtin.debug:
+    msg: >-
+      Destroyed VMID(s) {{ proxmox_testbed_destroy_vmids }} on
+      {{ proxmox_node }} and removed the generated inventory at
+      {{ proxmox_testbed_inventory_output }}.

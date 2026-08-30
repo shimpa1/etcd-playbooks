@@ -20,6 +20,10 @@ Two independent pieces:
   the generic playbook something to run against, and writes an inventory file
   the generic playbook can consume. Not a dependency of `roles/etcd` - if you
   already have hosts, skip this entirely.
+- **`playbooks/teardown_proxmox_testbed.yml`** - declarative counterpart to
+  the above. Destroys exactly the VMIDs the same variables would provision
+  and removes the generated inventory file. Idempotent - safe to run even if
+  the VMs are already gone.
 - **`site.yml`** - convenience wrapper that chains the two for a one-command
   demo against your own Proxmox host.
 
@@ -72,6 +76,14 @@ Re-running either playbook against an already-provisioned cluster is safe:
 VMs aren't re-cloned or duplicated, cluster members aren't duplicated, and
 config-only changes just trigger an in-place `etcdctl` restart of the
 affected node.
+
+To tear the test bed down completely and rebuild from scratch (useful for
+proving the whole pipeline is genuinely repeatable, not just idempotent):
+```bash
+ansible-playbook playbooks/teardown_proxmox_testbed.yml
+rm -rf pki/<cluster_name>/   # optional: forces brand-new certs instead of reusing existing ones
+ansible-playbook site.yml
+```
 
 ## Scaling the cluster
 
