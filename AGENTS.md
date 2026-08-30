@@ -14,15 +14,16 @@ This file is the project's committed home for project-intrinsic agent knowledge:
   `ERROR: Ansible requires blocking IO on stdin/stdout/stderr` - wrap the
   command in `script -q /dev/null <cmd>` to force blocking I/O.
 - Validated end-to-end against a real host: Proxmox VE 9.2.4, node `pve-i2`
-  at `10.4.0.13`, template VMID 9000 (`ubuntu-26.04-template`). A 4-node TLS
-  cluster (including a live scale-out from 3->4 via the runtime
-  `etcdctl member add` join path) was provisioned and confirmed healthy
-  there, with unauthenticated/plaintext access confirmed rejected; VMIDs
-  3201-3204 were left running afterward as a demonstrated working example.
-  A harmless orphaned thin LV `pve/vm-3101-disk-0` (device-mapper wouldn't
-  release it, ~12GB, not attached to any VM config) was left over from a
-  debugging cycle - safe to `lvremove -f` after it clears on its own, or
-  ignore.
+  at `10.4.0.13`, template VMID 9000 (`ubuntu-26.04-template`). Beyond a
+  first bootstrap and a 3->4 scale-out, the full cycle was proven genuinely
+  repeatable (not just idempotent): `teardown_proxmox_testbed.yml` destroyed
+  a running 4-node cluster, the local `pki/` dir was wiped, and provisioning
+  + etcd were re-run from scratch - fresh VMs, a brand-new CA, fresh certs,
+  healthy TLS cluster again. VMIDs 3201-3204 (`10.4.0.190-193`) are running
+  there now as a demonstrated working example. A harmless orphaned thin LV
+  `pve/vm-3101-disk-0` (device-mapper wouldn't release it, ~12GB, not
+  attached to any VM config) was left over from an earlier debugging cycle -
+  safe to `lvremove -f` after it clears on its own, or ignore.
 - TLS is mandatory, not a toggle (see README.md "TLS"). `roles/etcd`
   generates its own CA/peer/server/client certs via `community.crypto` -
   never assume plaintext etcd URLs when reading or editing this role.
