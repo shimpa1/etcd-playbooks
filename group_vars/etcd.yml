@@ -1,0 +1,20 @@
+---
+# Day-to-day tunables for the generic etcd role (roles/etcd), applied to the
+# inventory group "etcd". None of this is Proxmox-specific - it's used no
+# matter how the target hosts were provisioned. Cluster *size* is not a
+# variable here at all: it is simply the number of hosts in this group in
+# your inventory (see inventory/hosts.example.yml).
+#
+# This file auto-loads for hosts in a group literally named "etcd"
+# (Ansible's group_vars/<groupname>.yml convention). If you target a
+# differently named group via etcd_group_name (roles/etcd/defaults/main.yml),
+# copy this file to group_vars/<your-group-name>.yml too.
+#
+# The full list of overridable defaults (data dir, ports, install paths,
+# retry/timeout tuning, etc.) lives in roles/etcd/defaults/main.yml.
+
+# Used as the etcd initial-cluster-token and systemd unit description.
+etcd_cluster_name: etcd-cluster
+
+# Pinned etcd release. Bump this to roll the cluster to a new version.
+etcd_version: v3.7.1

@@ -1,0 +1,72 @@
+---
+- name: Assert required Proxmox secrets/credentials are provided
+  ansible.builtin.assert:
+    that:
+      - proxmox_api_token_id is defined
+      - proxmox_api_token_secret is defined
+      - proxmox_api_token_secret != "REPLACE_ME"
+      - proxmox_ci_ssh_public_key is defined
+      - proxmox_ci_ssh_public_key | length > 0
+    fail_msg: >-
+      Missing Proxmox API credentials or SSH public key. Copy
+      group_vars/proxmox_testbed_vault.yml.example to
+      group_vars/proxmox_testbed_vault.yml and fill it in (see README.md
+      "Secrets").
+  run_once: true
+
+- name: Assert enough static IPs are configured for the requested VM count
+  ansible.builtin.assert:
+    that:
+      - proxmox_testbed_static_ips | length >= proxmox_testbed_vm_count | int
+    fail_msg: >-
+      proxmox_testbed_static_ips has {{ proxmox_testbed_static_ips | length }}
+      entries but proxmox_testbed_vm_count is {{ proxmox_testbed_vm_count }}.
+      Add more IPs in group_vars/proxmox_testbed.yml (verify they're free on
+      your network first).
+  run_once: true
+
+- name: Register Proxmox host for direct SSH access (snippet upload)
+  ansible.builtin.add_host:
+    name: proxmox_ssh_target
+    ansible_host: "{{ proxmox_api_host }}"
+    ansible_user: "{{ proxmox_api_user | regex_replace('@.*$', '') }}"
+    # Play-level `connection: local` (needed for localhost/API tasks) would
+    # otherwise leak into delegate_to as well - force real SSH here.
+    ansible_connection: ssh
+    groups: proxmox_host_internal
+  changed_when: false
+
+- name: Ensure the snippets directory exists on proxmox_snippet_storage
+  ansible.builtin.file:
+    path: "{{ proxmox_snippet_storage_path }}/snippets"
+    state: directory
+    mode: "0755"
+  delegate_to: proxmox_ssh_target
+
+- name: Render cloud-init vendor-data snippet (netplan-apply workaround)
+  ansible.builtin.template:
+    src: vendor-data.yaml.j2
+    dest: "{{ proxmox_snippet_storage_path }}/snippets/etcd-testbed-vendor-data.yaml"
+    mode: "0644"
+  delegate_to: proxmox_ssh_target
+
+- name: Provision each test VM
+  ansible.builtin.include_tasks: provision_one_vm.yml
+  loop: "{{ range(0, proxmox_testbed_vm_count | int) | list }}"
+  loop_control:
+    loop_var: vm_index
+
+- name: Render generated inventory for the etcd group
+  ansible.builtin.template:
+    src: inventory.yml.j2
+    dest: "{{ proxmox_testbed_inventory_output }}"
+    mode: "0644"
+
+- name: Provisioning summary
+  ansible.builtin.debug:
+    msg: >-
+      Provisioned {{ proxmox_testbed_provisioned_hosts | length }} VM(s):
+      {{ proxmox_testbed_provisioned_hosts | map(attribute='name') | list }}.
+      Static inventory written to {{ proxmox_testbed_inventory_output }} -
+      re-run the generic playbook any time with:
+      ansible-playbook -i {{ proxmox_testbed_inventory_output }} playbooks/etcd.yml

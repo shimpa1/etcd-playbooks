@@ -1,0 +1,7 @@
+*.retry
+.vault_pass
+group_vars/proxmox_testbed_vault.yml
+inventory/proxmox_testbed/hosts.yml
+*.pyc
+__pycache__/
+.DS_Store

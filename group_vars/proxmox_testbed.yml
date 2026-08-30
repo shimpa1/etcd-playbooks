@@ -1,0 +1,44 @@
+---
+# Deployment-specific values for THIS Proxmox host, used only by
+# playbooks/provision_proxmox_testbed.yml (roles/proxmox_testbed). None of
+# this is read by, or required by, the generic playbooks/etcd.yml.
+#
+# Secrets (API token, SSH public key to inject) are NOT here - see
+# group_vars/proxmox_testbed_vault.yml.example and README.md.
+
+proxmox_api_host: "10.4.0.13"
+proxmox_api_user: "root@pam"
+proxmox_node: "pve-i2"
+
+# Ubuntu Server 26 template already present in local storage on this host
+# (qm config 9000 -> name: ubuntu-26.04-template, template: 1).
+proxmox_template_vmid: 9000
+
+# Clear of every VMID already in use on this host at design time
+# (100-135, 1001/1002/1010, 2001/2002, 8001, 9000, 11001, 12001).
+proxmox_vmid_start: 3101
+
+proxmox_storage: local-lvm
+proxmox_bridge: vmbr0
+proxmox_vlan_tag: ~
+
+# st-1 has "snippets" in its content types and is accessible on pve-i2
+# (the template's own local-dir storage is snippets-capable but restricted
+# to node pve-7642-1, which is what broke its inherited cicustom reference).
+proxmox_snippet_storage: st-1
+proxmox_snippet_storage_path: /mnt/pve/st-1
+
+proxmox_testbed_vm_count: 3
+proxmox_testbed_name_prefix: etcd-test
+proxmox_testbed_vm_cores: 2
+proxmox_testbed_vm_sockets: 1
+proxmox_testbed_vm_memory_mb: 2048
+
+# Free-looking addresses on this LAN at design time (no ping/ARP response
+# during probing) - verify they're still free before relying on this list.
+proxmox_testbed_static_ips:
+  - "10.4.0.190"
+  - "10.4.0.191"
+  - "10.4.0.192"
+proxmox_testbed_network_prefix: 24
+proxmox_testbed_gateway: "10.4.0.5"
