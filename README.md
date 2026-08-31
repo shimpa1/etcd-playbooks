@@ -207,9 +207,6 @@ shipped serial-only.
 
 ## Known Proxmox template gotchas this repo works around
 
-Discovered while validating against a real host - worth knowing if you point
-this at your own template:
-
 - **Stale cloud-init instance cache**: a template not cleaned with
   `cloud-init clean` before being converted causes every clone to skip
   re-applying network config on boot (cloud-init logs
