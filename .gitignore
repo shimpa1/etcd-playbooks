@@ -1,0 +1,10 @@
+*.retry
+.vault_pass
+group_vars/proxmox_testbed_vault.yml
+inventory/proxmox_testbed/hosts.yml
+# Generated CA/peer/server/client keys and certs (community.crypto output) -
+# secrets, never commit. See README.md "TLS".
+/pki/
+*.pyc
+__pycache__/
+.DS_Store

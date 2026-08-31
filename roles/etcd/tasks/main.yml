@@ -1,0 +1,229 @@
+---
+- name: Assert the etcd inventory group is not empty
+  ansible.builtin.assert:
+    that:
+      - groups[etcd_group_name] is defined
+      - groups[etcd_group_name] | length > 0
+    fail_msg: >-
+      Inventory group '{{ etcd_group_name }}' is empty or missing. Cluster
+      size is derived from this group's membership - add hosts to it (see
+      inventory/hosts.example.yml) or override etcd_group_name.
+  run_once: true
+
+- name: Resolve download architecture
+  ansible.builtin.set_fact:
+    etcd_resolved_arch: >-
+      {{ etcd_download_arch if etcd_download_arch else
+      (arch_map[ansible_architecture] | default(ansible_architecture)) }}
+  vars:
+    arch_map:
+      x86_64: amd64
+      aarch64: arm64
+      armv7l: arm
+
+- name: Compute cluster membership facts
+  ansible.builtin.set_fact:
+    etcd_initial_cluster: >-
+      {% for h in groups[etcd_group_name] %}{{ h }}=https://{{ hostvars[h].ansible_host | default(h) }}:{{ etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}
+    etcd_all_client_endpoints: >-
+      {% for h in groups[etcd_group_name] %}https://{{ hostvars[h].ansible_host | default(h) }}:{{ etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}
+    etcd_etcdctl_env:
+      ETCDCTL_CACERT: "{{ etcd_remote_pki_dir }}/ca.pem"
+      ETCDCTL_CERT: "{{ etcd_remote_pki_dir }}/client.pem"
+      ETCDCTL_KEY: "{{ etcd_remote_pki_dir }}/client-key.pem"
+
+- name: Check whether this node has already bootstrapped etcd data
+  ansible.builtin.stat:
+    path: "{{ etcd_data_dir }}/member"
+  register: etcd_member_dir
+
+- name: Determine whether the etcd cluster already exists
+  run_once: true
+  ansible.builtin.set_fact:
+    etcd_cluster_already_exists: >-
+      {{ groups[etcd_group_name]
+      | map('extract', hostvars)
+      | selectattr('etcd_member_dir.stat.exists', 'true')
+      | list | length > 0 }}
+
+- name: Determine this node's effective initial-cluster-state
+  ansible.builtin.set_fact:
+    etcd_effective_cluster_state: >-
+      {{ 'existing' if (etcd_cluster_already_exists and not etcd_member_dir.stat.exists)
+      else etcd_initial_cluster_state }}
+
+- name: Pick an already-bootstrapped member to delegate member-add calls to
+  run_once: true
+  ansible.builtin.set_fact:
+    etcd_existing_member_host: "{{ item }}"
+  loop: "{{ groups[etcd_group_name] }}"
+  when:
+    - etcd_cluster_already_exists
+    - hostvars[item].etcd_member_dir.stat.exists
+    - etcd_existing_member_host is not defined
+
+- name: Register this node as a member on the running cluster before it starts
+  # A node joining an already-bootstrapped cluster must be registered via the
+  # runtime API first - initial-cluster-state alone only bootstraps a brand
+  # new cluster on every member's very first simultaneous start. This is what
+  # makes "add a host to the inventory group and re-run" work as a genuine
+  # scale-out, not just a fresh-cluster convenience.
+  ansible.builtin.command: >-
+    {{ etcd_install_dir }}/etcdctl
+    --endpoints=https://{{ hostvars[etcd_existing_member_host].ansible_host | default(etcd_existing_member_host) }}:{{ etcd_client_port }}
+    member add {{ inventory_hostname }}
+    --peer-urls=https://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:{{ etcd_peer_port }}
+  environment: "{{ etcd_etcdctl_env }}"
+  delegate_to: "{{ etcd_existing_member_host | default(inventory_hostname) }}"
+  when:
+    - etcd_effective_cluster_state == 'existing'
+    - not etcd_member_dir.stat.exists
+  register: etcd_member_add_result
+  changed_when: "'added' in (etcd_member_add_result.stdout | default(''))"
+  failed_when: >-
+    etcd_member_add_result.rc != 0 and
+    'already' not in (etcd_member_add_result.stderr | default('') | lower)
+
+- name: Install prerequisite packages
+  ansible.builtin.package:
+    name:
+      - tar
+      - ca-certificates
+    state: present
+  become: true
+
+- name: Create etcd system group
+  ansible.builtin.group:
+    name: "{{ etcd_system_group }}"
+    system: true
+    state: present
+  become: true
+
+- name: Create etcd system user
+  ansible.builtin.user:
+    name: "{{ etcd_system_user }}"
+    group: "{{ etcd_system_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: "{{ etcd_data_dir }}"
+    create_home: false
+    state: present
+  become: true
+
+- name: Create etcd data and config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ etcd_system_user }}"
+    group: "{{ etcd_system_group }}"
+    mode: "0700"
+  loop:
+    - "{{ etcd_data_dir }}"
+    - "{{ etcd_config_dir }}"
+  become: true
+
+- name: Set up TLS (CA, peer/server/client certificates)
+  ansible.builtin.include_tasks: tls.yml
+
+- name: Check currently installed etcd version
+  ansible.builtin.command: "{{ etcd_install_dir }}/etcd --version"
+  register: etcd_installed_version
+  changed_when: false
+  failed_when: false
+
+- name: Determine whether etcd needs (re)installing
+  ansible.builtin.set_fact:
+    etcd_needs_install: >-
+      {{ etcd_installed_version.rc != 0 or
+      (etcd_version | regex_replace('^v', '')) not in
+      (etcd_installed_version.stdout | default('')) }}
+
+- name: Download and install etcd {{ etcd_version }}
+  when: etcd_needs_install
+  become: true
+  block:
+    - name: Download etcd release tarball (checksum-verified)
+      ansible.builtin.get_url:
+        url: >-
+          {{ etcd_download_base_url }}/{{ etcd_version }}/etcd-{{ etcd_version }}-linux-{{ etcd_resolved_arch }}.tar.gz
+        dest: "/tmp/etcd-{{ etcd_version }}-linux-{{ etcd_resolved_arch }}.tar.gz"
+        checksum: >-
+          sha256:{{ etcd_download_base_url }}/{{ etcd_version }}/SHA256SUMS
+        mode: "0644"
+
+    - name: Extract etcd/etcdctl/etcdutl binaries
+      ansible.builtin.unarchive:
+        src: "/tmp/etcd-{{ etcd_version }}-linux-{{ etcd_resolved_arch }}.tar.gz"
+        dest: "{{ etcd_install_dir }}"
+        remote_src: true
+        extra_opts:
+          - "--strip-components=1"
+          - "etcd-{{ etcd_version }}-linux-{{ etcd_resolved_arch }}/etcd"
+          - "etcd-{{ etcd_version }}-linux-{{ etcd_resolved_arch }}/etcdctl"
+          - "etcd-{{ etcd_version }}-linux-{{ etcd_resolved_arch }}/etcdutl"
+        mode: "0755"
+
+- name: Render etcd configuration
+  ansible.builtin.template:
+    src: etcd.conf.yml.j2
+    dest: "{{ etcd_config_dir }}/etcd.conf.yml"
+    owner: "{{ etcd_system_user }}"
+    group: "{{ etcd_system_group }}"
+    mode: "0600"
+  become: true
+  notify: Restart etcd
+
+- name: Render etcd systemd unit
+  ansible.builtin.template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Restart etcd
+
+- name: Enable and start etcd
+  ansible.builtin.systemd:
+    name: etcd
+    daemon_reload: true
+    enabled: true
+    state: started
+  become: true
+
+- name: Apply any pending config/unit changes before checking health
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for etcd client port to accept connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ etcd_client_port }}"
+    timeout: "{{ etcd_start_wait_timeout }}"
+
+- name: Verify cluster health
+  ansible.builtin.command: >-
+    {{ etcd_install_dir }}/etcdctl
+    --endpoints={{ etcd_all_client_endpoints }}
+    endpoint health --cluster -w json
+  environment: "{{ etcd_etcdctl_env }}"
+  register: etcd_health
+  changed_when: false
+  retries: "{{ etcd_health_check_retries }}"
+  delay: "{{ etcd_health_check_delay }}"
+  until: etcd_health.rc == 0
+  run_once: true
+
+- name: Report cluster member list
+  ansible.builtin.command: >-
+    {{ etcd_install_dir }}/etcdctl
+    --endpoints={{ etcd_all_client_endpoints }}
+    member list -w table
+  environment: "{{ etcd_etcdctl_env }}"
+  register: etcd_members
+  changed_when: false
+  run_once: true
+
+- name: Show cluster member list
+  ansible.builtin.debug:
+    msg: "{{ etcd_members.stdout_lines }}"
+  run_once: true

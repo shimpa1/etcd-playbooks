@@ -1,0 +1,14 @@
+---
+# Copy this file to group_vars/proxmox_testbed_vault.yml (already gitignored
+# - it will never be committed) and fill in real values, OR encrypt it in
+# place with `ansible-vault encrypt group_vars/proxmox_testbed_vault.yml` if
+# you'd rather commit it safely. See README.md "Secrets" section.
+
+# From: pveum user token add root@pam ansible-etcd --privsep 0
+proxmox_api_token_id: ansible-etcd
+proxmox_api_token_secret: REPLACE_ME
+
+# Public key injected into the cloud-init user (proxmox_ci_user) on every
+# test VM. Use a key you hold the private half of - Ansible needs it to
+# SSH in and run playbooks/etcd.yml afterwards.
+proxmox_ci_ssh_public_key: "ssh-ed25519 AAAA... you@example.com"

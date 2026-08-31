@@ -1,0 +1,16 @@
+---
+# Generic, host-agnostic etcd cluster builder.
+#
+# Targets the inventory group "etcd" (override with -e etcd_group_name=...).
+# Cluster size is whatever is in that group - no Proxmox awareness, no
+# dependency on roles/proxmox_testbed. Works against hand-written inventory,
+# cloud instances, bare metal, or VMs stood up by playbooks/provision_proxmox_testbed.yml.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.example.yml playbooks/etcd.yml
+- name: Build a multi-node etcd cluster from the inventory
+  hosts: "{{ etcd_group_name | default('etcd') }}"
+  become: true
+  gather_facts: true
+  roles:
+    - etcd

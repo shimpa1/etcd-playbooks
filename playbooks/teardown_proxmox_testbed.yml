@@ -1,0 +1,21 @@
+---
+# OPTIONAL: declarative teardown counterpart to
+# provision_proxmox_testbed.yml. Destroys exactly the VMIDs that
+# proxmox_vmid_start/proxmox_testbed_vm_count would provision (same
+# variables, same lockstep) and removes the generated static inventory.
+# Idempotent - destroying an already-absent VMID is a no-op.
+#
+# Usage:
+#   ansible-playbook playbooks/teardown_proxmox_testbed.yml
+- name: Destroy disposable Proxmox test VMs for etcd-playbooks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/proxmox_testbed.yml"
+    - "{{ playbook_dir }}/../group_vars/proxmox_testbed_vault.yml"
+  tasks:
+    - name: Run proxmox_testbed teardown tasks
+      ansible.builtin.include_role:
+        name: proxmox_testbed
+        tasks_from: destroy

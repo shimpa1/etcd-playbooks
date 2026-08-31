@@ -1,0 +1,13 @@
+#cloud-config
+# {{ ansible_managed }}
+#
+# Works around cloned VMs inheriting a stale cloud-init instance cache from
+# the source template: cloud-init only (re)applies network-config on a
+# genuinely "new instance" boot, and a template not cleaned with
+# `cloud-init clean` before being captured breaks that detection for every
+# clone (confirmed via cloud-init.log: "Event Denied: scopes=['network']
+# EventType=boot-legacy"). user-data modules (hostname/user/ssh-keys/runcmd)
+# are not gated the same way, so forcing a netplan apply here sidesteps it
+# without touching the shared template.
+runcmd:
+  - [netplan, apply]

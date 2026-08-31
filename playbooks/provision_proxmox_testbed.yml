@@ -1,0 +1,21 @@
+---
+# OPTIONAL: stands up disposable Ubuntu VMs on a Proxmox host purely to give
+# playbooks/etcd.yml something real to run against. This is NOT a dependency
+# of the generic etcd playbook/role - it exists only for local testing and
+# demos. Bring your own hosts (bare metal, cloud, whatever) and skip this
+# entirely if you don't use Proxmox.
+#
+# Requires group_vars/proxmox_testbed_vault.yml (copy from the .example next
+# to it and fill in real values - never commit it, see README.md).
+#
+# Usage:
+#   ansible-playbook playbooks/provision_proxmox_testbed.yml
+- name: Provision disposable Proxmox test VMs for etcd-playbooks
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - "{{ playbook_dir }}/../group_vars/proxmox_testbed.yml"
+    - "{{ playbook_dir }}/../group_vars/proxmox_testbed_vault.yml"
+  roles:
+    - proxmox_testbed

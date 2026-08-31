@@ -1,0 +1,23 @@
+---
+# Example generic inventory for playbooks/etcd.yml.
+#
+# This is the ONLY thing the etcd role cares about: a group (default name
+# "etcd") containing every host that should join the cluster. Where those
+# hosts came from is irrelevant - hand-provisioned bare metal, cloud
+# instances, or VMs stood up by roles/proxmox_testbed all work the same way.
+#
+# Copy this file (or point -i at your own inventory) and edit the hosts.
+# Node count is simply "however many hosts are in the etcd group".
+all:
+  children:
+    etcd:
+      hosts:
+        etcd-node-01:
+          ansible_host: 192.0.2.11
+        etcd-node-02:
+          ansible_host: 192.0.2.12
+        etcd-node-03:
+          ansible_host: 192.0.2.13
+      vars:
+        ansible_user: ansible
+        # ansible_ssh_private_key_file: ~/.ssh/id_ed25519

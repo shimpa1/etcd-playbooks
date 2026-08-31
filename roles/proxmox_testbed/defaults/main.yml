@@ -1,0 +1,51 @@
+---
+# Generic fallback defaults for the OPTIONAL Proxmox test-bed provisioner.
+# This role is NOT used by, imported by, or required by roles/etcd - it only
+# exists to stand up disposable Ubuntu VMs to validate playbooks/etcd.yml
+# against. Deployment-specific values (which Proxmox host, which node, which
+# template) live in group_vars/proxmox_testbed.yml, not here.
+
+proxmox_api_user: root@pam
+proxmox_api_port: 8006
+proxmox_validate_certs: false
+
+# Source template to clone (must already exist in Proxmox local storage).
+proxmox_template_vmid: 9000
+
+# First VMID to use; subsequent nodes get vmid_start+1, vmid_start+2, ...
+# Pick a value clear of any existing VMIDs on your Proxmox host.
+proxmox_vmid_start: 100
+
+proxmox_storage: local-lvm
+proxmox_bridge: vmbr0
+proxmox_vlan_tag: ~
+
+# Storage used to hold the cloud-init vendor-data snippet (see
+# templates/vendor-data.yaml.j2) - must have "snippets" in its content
+# types and be accessible on proxmox_node. Path is the storage's filesystem
+# mount point (pvesm status / storage.cfg), needed to write the file there.
+proxmox_snippet_storage: local
+proxmox_snippet_storage_path: /var/lib/vz
+
+proxmox_testbed_vm_count: 3
+proxmox_testbed_name_prefix: etcd-test
+proxmox_testbed_vm_cores: 2
+proxmox_testbed_vm_sockets: 1
+proxmox_testbed_vm_memory_mb: 2048
+
+proxmox_ci_user: ansible
+
+# Static addressing: simpler and more reliable than QEMU guest-agent IP
+# discovery, which depends on the guest image having a working agent (not
+# guaranteed for a hand-built template). proxmox_testbed_static_ips must
+# have at least proxmox_testbed_vm_count entries - set in
+# group_vars/proxmox_testbed.yml since free IPs are network-specific.
+proxmox_testbed_static_ips: []
+proxmox_testbed_network_prefix: 24
+proxmox_testbed_gateway: ~
+
+proxmox_ssh_wait_retries: 30
+proxmox_ssh_wait_delay: 10
+
+proxmox_testbed_inventory_output: "{{ playbook_dir }}/../inventory/proxmox_testbed/hosts.yml"
+proxmox_testbed_inventory_group: etcd

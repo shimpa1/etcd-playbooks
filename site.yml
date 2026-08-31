@@ -1,0 +1,14 @@
+---
+# Convenience one-shot demo: provision disposable Proxmox test VMs, then run
+# the generic etcd playbook against exactly the hosts just provisioned (via
+# the in-memory inventory group the provisioning role adds them to).
+#
+# This wrapper is Proxmox-specific. It does not belong to, and is not
+# required by, the generic etcd role - if you already have hosts, run
+# playbooks/etcd.yml directly against your own inventory instead:
+#   ansible-playbook -i inventory/hosts.example.yml playbooks/etcd.yml
+#
+# Usage:
+#   ansible-playbook site.yml
+- import_playbook: playbooks/provision_proxmox_testbed.yml
+- import_playbook: playbooks/etcd.yml

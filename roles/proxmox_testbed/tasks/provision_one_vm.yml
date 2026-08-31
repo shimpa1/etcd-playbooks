@@ -1,0 +1,94 @@
+---
+- name: Compute identity for test VM index {{ vm_index }}
+  ansible.builtin.set_fact:
+    proxmox_vm_vmid: "{{ proxmox_vmid_start | int + vm_index }}"
+    proxmox_vm_name: "{{ proxmox_testbed_name_prefix }}-{{ '%02d' | format(vm_index + 1) }}"
+    proxmox_vm_ip: "{{ proxmox_testbed_static_ips[vm_index] }}"
+
+- name: "Clone {{ proxmox_vm_name }} (vmid {{ proxmox_vm_vmid }}) from template {{ proxmox_template_vmid }}"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_port: "{{ proxmox_api_port }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    node: "{{ proxmox_node }}"
+    clone: "{{ proxmox_testbed_name_prefix }}-template-clone"
+    vmid: "{{ proxmox_template_vmid }}"
+    newid: "{{ proxmox_vm_vmid }}"
+    name: "{{ proxmox_vm_name }}"
+    storage: "{{ proxmox_storage }}"
+    full: true
+    timeout: 300
+    net:
+      net0: "virtio,bridge={{ proxmox_bridge }}{{ ',tag=' ~ proxmox_vlan_tag if proxmox_vlan_tag else '' }}"
+
+- name: "Configure {{ proxmox_vm_name }}: sizing, console, cloud-init"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_port: "{{ proxmox_api_port }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ proxmox_vm_vmid }}"
+    update: true
+    name: "{{ proxmox_vm_name }}"
+    cores: "{{ proxmox_testbed_vm_cores }}"
+    sockets: "{{ proxmox_testbed_vm_sockets }}"
+    memory: "{{ proxmox_testbed_vm_memory_mb }}"
+    agent: "enabled=1"
+    # Serial + VGA must always ship together: never a serial-only console.
+    serial:
+      serial0: socket
+    vga: std
+    ciuser: "{{ proxmox_ci_user }}"
+    sshkeys: "{{ proxmox_ci_ssh_public_key }}"
+    # The template has ciupgrade enabled, which runs a full package upgrade
+    # (often a kernel/grub update + reboot) on every clone's first boot -
+    # fine for a real cluster node, but needlessly slow for a disposable
+    # test VM. Disable it here.
+    ciupgrade: false
+    ipconfig:
+      ipconfig0: "ip={{ proxmox_vm_ip }}/{{ proxmox_testbed_network_prefix }}{{ ',gw=' ~ proxmox_testbed_gateway if proxmox_testbed_gateway else '' }}"
+    onboot: true
+    tags:
+      - etcd-testbed
+    # See templates/vendor-data.yaml.j2: works around a stale cloud-init
+    # instance cache baked into the source template, which otherwise
+    # silently skips applying network config on cloned VMs.
+    cicustom: "vendor={{ proxmox_snippet_storage }}:snippets/etcd-testbed-vendor-data.yaml"
+
+- name: "Ensure {{ proxmox_vm_name }} is started"
+  community.proxmox.proxmox_kvm:
+    api_host: "{{ proxmox_api_host }}"
+    api_port: "{{ proxmox_api_port }}"
+    api_user: "{{ proxmox_api_user }}"
+    api_token_id: "{{ proxmox_api_token_id }}"
+    api_token_secret: "{{ proxmox_api_token_secret }}"
+    validate_certs: "{{ proxmox_validate_certs }}"
+    node: "{{ proxmox_node }}"
+    vmid: "{{ proxmox_vm_vmid }}"
+    state: started
+
+- name: "Wait for {{ proxmox_vm_name }} to accept SSH connections at {{ proxmox_vm_ip }}"
+  ansible.builtin.wait_for:
+    host: "{{ proxmox_vm_ip }}"
+    port: 22
+    timeout: "{{ proxmox_ssh_wait_retries | int * proxmox_ssh_wait_delay | int }}"
+  delegate_to: localhost
+
+- name: "Register {{ proxmox_vm_name }} in the in-memory etcd group"
+  ansible.builtin.add_host:
+    name: "{{ proxmox_vm_name }}"
+    ansible_host: "{{ proxmox_vm_ip }}"
+    ansible_user: "{{ proxmox_ci_user }}"
+    groups: "{{ proxmox_testbed_inventory_group }}"
+
+- name: "Record {{ proxmox_vm_name }} for the generated static inventory"
+  ansible.builtin.set_fact:
+    proxmox_testbed_provisioned_hosts: >-
+      {{ (proxmox_testbed_provisioned_hosts | default([])) +
+      [{'name': proxmox_vm_name, 'ansible_host': proxmox_vm_ip, 'vmid': proxmox_vm_vmid | int}] }}
