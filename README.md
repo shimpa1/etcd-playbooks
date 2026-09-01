@@ -1,8 +1,7 @@
 # etcd-playbooks
 
 Ansible playbooks for quick creation of multi-node etcd clusters, declaratively
-and repeatably - node count, sizing, and network are all variables, not
-hardcoded task logic.
+and repeatably - node count, sizing, and network are all variables.
 
 ## Design
 
